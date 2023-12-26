@@ -1,3 +1,5 @@
+import org.opensearch.gradle.VersionProperties
+
 /*
  * Copyright OpenSearch Contributors
  * SPDX-License-Identifier: Apache-2.0
@@ -45,6 +47,8 @@ plugins {
     id "io.freefair.lombok" version "8.4"
     id 'jacoco'
 }
+
+project.getExtensions().getExtraProperties().set("versions", VersionProperties.getVersions());
 
 apply plugin: "com.dorongold.task-tree"
 
