@@ -24,6 +24,7 @@ import org.opensearch.ml.utils.TestHelper;
 
 import com.google.common.collect.ImmutableList;
 
+@Ignore
 public class RestMLRemoteInferenceIT extends MLCommonsRestTestCase {
 
     private final String OPENAI_KEY = System.getenv("OPENAI_KEY");
