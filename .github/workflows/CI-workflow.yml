@@ -44,10 +44,10 @@ jobs:
         with:
           java-version: ${{ matrix.java }}
 
-      - uses: aws-actions/configure-aws-credentials@v2
-        with:
-          role-to-assume: ${{ secrets.ML_ROLE }}
-          aws-region: us-west-2
+#      - uses: aws-actions/configure-aws-credentials@v2
+#        with:
+#          role-to-assume: ${{ secrets.ML_ROLE }}
+#          aws-region: us-west-2
 
       - name: Checkout MLCommons
         uses: actions/checkout@v3
@@ -96,10 +96,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: aws-actions/configure-aws-credentials@v2
-        with:
-          role-to-assume: ${{ secrets.ML_ROLE }}
-          aws-region: us-west-2
+#      - uses: aws-actions/configure-aws-credentials@v2
+#        with:
+#          role-to-assume: ${{ secrets.ML_ROLE }}
+#          aws-region: us-west-2
 
       - name: Checkout MLCommons
         uses: actions/checkout@v3
