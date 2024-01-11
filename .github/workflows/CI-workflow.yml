@@ -91,7 +91,7 @@ jobs:
         java: [11, 17, 21]
 
     name: Test MLCommons Plugin on linux docker
-    if: github.repository == 'opensearch-project/ml-commons'
+    # if: github.repository == 'opensearch-project/ml-commons'
     environment: ml-commons-cicd-env
     runs-on: ubuntu-latest
 
