@@ -26,7 +26,7 @@ jobs:
         java: [11, 17, 21]
 
     name: Build and Test MLCommons Plugin on linux
-    if: github.repository == 'opensearch-project/ml-commons'
+    #if: github.repository == 'opensearch-project/ml-commons'
     environment: ml-commons-cicd-env
     outputs:
       build-test-linux: ${{ steps.step-build-test-linux.outputs.build-test-linux }}
