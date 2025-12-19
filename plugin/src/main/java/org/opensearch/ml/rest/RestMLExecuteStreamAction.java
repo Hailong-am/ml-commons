@@ -167,7 +167,6 @@ public class RestMLExecuteStreamAction extends BaseRestHandler {
         }
 
         final StreamingRestChannelConsumer consumer = (channel) -> {
-
             Supplier<ThreadContext.StoredContext> supplier = client.threadPool().getThreadContext().newRestorableContext(true);
 
             Map<String, List<String>> headers = Map
@@ -183,7 +182,6 @@ public class RestMLExecuteStreamAction extends BaseRestHandler {
 
             Flux.from(channel).ofType(HttpChunk.class).collectList().flatMap(chunks -> {
                 try (ThreadContext.StoredContext context = supplier.get()) {
-
                     BytesReference completeContent = combineChunks(chunks);
                     MLExecuteTaskRequest mlExecuteTaskRequest = getRequest(agentId, request, completeContent, client);
                     boolean isAGUI = isAGUIAgent(mlExecuteTaskRequest);
@@ -257,7 +255,8 @@ public class RestMLExecuteStreamAction extends BaseRestHandler {
                     log.error("Failed to parse or process request", e);
                     return Mono.error(e);
                 }
-            }).doOnNext(channel::sendChunk).onErrorResume(ex -> {
+            }).doOnNext(channel::sendChunk)
+            .onErrorResume(ex -> {
                 log.error("Error occurred", ex);
                 try {
                     String errorMessage = ex instanceof IOException

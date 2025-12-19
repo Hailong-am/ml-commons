@@ -41,14 +41,17 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.extern.log4j.Log4j2;
+import org.opensearch.secure_sm.AccessController;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.client.config.ClientAsyncConfiguration;
 import software.amazon.awssdk.core.document.Document;
 import software.amazon.awssdk.http.async.SdkAsyncHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeAsyncClient;
+import software.amazon.awssdk.services.bedrockruntime.auth.scheme.internal.DefaultBedrockRuntimeAuthSchemeProvider;
 import software.amazon.awssdk.services.bedrockruntime.model.ContentBlock;
 import software.amazon.awssdk.services.bedrockruntime.model.ContentBlockDeltaEvent;
 import software.amazon.awssdk.services.bedrockruntime.model.ContentBlockStartEvent;
@@ -510,13 +513,13 @@ public class BedrockStreamingHandler extends BaseStreamingHandler {
                     .create(AwsSessionCredentials.create(connector.getAccessKey(), connector.getSecretKey(), connector.getSessionToken()))
                 : StaticCredentialsProvider.create(AwsBasicCredentials.create(connector.getAccessKey(), connector.getSecretKey()));
 
-            return BedrockRuntimeAsyncClient
+         return AccessController.doPrivileged(()-> BedrockRuntimeAsyncClient
                 .builder()
                 .region(Region.of(connector.getRegion()))
                 .credentialsProvider(awsCredentialsProvider)
                 .httpClient(httpClient)
-                .build();
-        });
+                .build());
+});
     }
 
     private List<SystemContentBlock> parseSystemMessages(JsonNode systemArray) {

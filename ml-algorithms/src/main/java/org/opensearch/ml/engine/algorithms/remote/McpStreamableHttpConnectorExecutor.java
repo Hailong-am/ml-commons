@@ -78,8 +78,8 @@ public class McpStreamableHttpConnectorExecutor extends AbstractConnectorExecuto
             .orElse(MCP_DEFAULT_STREAMABLE_HTTP_ENDPOINT);
         List<MLToolSpec> mcpToolSpecs = new ArrayList<>();
         try {
-            Duration connectionTimeout = Duration.ofSeconds(super.getConnectorClientConfig().getConnectionTimeout());
-            Duration readTimeout = Duration.ofSeconds(super.getConnectorClientConfig().getReadTimeout());
+            Duration connectionTimeout = Duration.ofMillis(super.getConnectorClientConfig().getConnectionTimeout());
+            Duration readTimeout = Duration.ofMillis(super.getConnectorClientConfig().getReadTimeout());
 
             Consumer<HttpRequest.Builder> headerConfig = builder -> {
                 if (connector.getDecryptedHeaders() != null) {
