@@ -12,6 +12,7 @@ import static org.opensearch.ml.common.conversation.ConversationalIndexConstants
 import static org.opensearch.ml.common.conversation.ConversationalIndexConstants.INTERACTIONS_RESPONSE_FIELD;
 import static org.opensearch.ml.common.memorycontainer.MemoryContainerConstants.MEMORY_CONTAINER_ID_FIELD;
 import static org.opensearch.ml.common.utils.MLTaskUtils.updateMLTaskDirectly;
+import static org.opensearch.ml.common.utils.StringUtils.gson;
 import static org.opensearch.ml.common.utils.StringUtils.isJson;
 import static org.opensearch.ml.engine.algorithms.agent.AgentUtils.LLM_INTERFACE_BEDROCK_CONVERSE_CLAUDE;
 import static org.opensearch.ml.engine.algorithms.agent.AgentUtils.LLM_INTERFACE_BEDROCK_CONVERSE_DEEPSEEK_R1;
@@ -104,6 +105,9 @@ public class MLPlanExecuteAndReflectAgentRunner implements MLAgentRunner {
     // flag to track if task has been updated with executor memory ids or not
     private boolean taskUpdated = false;
     private final Map<String, Object> taskUpdates = new HashMap<>();
+
+    // Token usage tracking
+    private TokenUsageTracker tokenUsageTracker;
 
     // prompts
     private String plannerPrompt;
@@ -297,6 +301,9 @@ public class MLPlanExecuteAndReflectAgentRunner implements MLAgentRunner {
         allParams.put(TENANT_ID_FIELD, mlAgent.getTenantId());
         log.debug("MLPlanExecuteAndReflectAgentRunner called with allParams: {}", allParams);
 
+        // Initialize token usage tracker for this run
+        this.tokenUsageTracker = new TokenUsageTracker();
+
         setupPromptParameters(allParams);
 
         // planner prompt for the first call
@@ -463,6 +470,10 @@ public class MLPlanExecuteAndReflectAgentRunner implements MLAgentRunner {
 
         planListener.whenComplete(llmOutput -> {
             ModelTensorOutput modelTensorOutput = (ModelTensorOutput) llmOutput.getOutput();
+
+            // Extract and track token usage from planner LLM call
+            extractAndTrackTokenUsage(modelTensorOutput, "planner", stepsExecuted + 1, tokenUsageTracker);
+
             Map<String, Object> parseLLMOutput = parseLLMOutput(allParams, modelTensorOutput);
 
             if (parseLLMOutput.get(RESULT_FIELD) != null) {
@@ -520,6 +531,9 @@ public class MLPlanExecuteAndReflectAgentRunner implements MLAgentRunner {
                 client.execute(MLExecuteTaskAction.INSTANCE, executeRequest, ActionListener.wrap(executeResponse -> {
                     ModelTensorOutput reactResult = (ModelTensorOutput) executeResponse.getOutput();
 
+                    // Extract and track token usage from executor's response
+                    extractExecutorTokenUsage(reactResult, stepsExecuted + 1, stepToExecute, tokenUsageTracker);
+
                     // Navigate through the structure to get the response
                     Map<String, String> results = new HashMap<>();
 
@@ -531,6 +545,9 @@ public class MLPlanExecuteAndReflectAgentRunner implements MLAgentRunner {
                                 break;
                             case PARENT_INTERACTION_ID_FIELD:
                                 results.put(PARENT_INTERACTION_ID_FIELD, tensor.getResult());
+                                break;
+                            case "token_usage":
+                                // Skip token_usage tensor, already processed above
                                 break;
                             default:
                                 String stepResult = parseTensorDataMap(tensor);
@@ -623,11 +640,13 @@ public class MLPlanExecuteAndReflectAgentRunner implements MLAgentRunner {
                     );
                 }, e -> {
                     log.error("Failed to execute ReAct agent", e);
+                    logTokenUsageSummary();
                     finalListener.onFailure(e);
                 }));
             }
         }, e -> {
             log.error("Failed to run deep research agent", e);
+            logTokenUsageSummary();
             finalListener.onFailure(e);
         });
 
@@ -761,6 +780,9 @@ public class MLPlanExecuteAndReflectAgentRunner implements MLAgentRunner {
         String input,
         ActionListener<Object> finalListener
     ) {
+        // Log aggregated token usage
+        logTokenUsageSummary();
+
         if (memory != null) {
             Map<String, Object> updateContent = new HashMap<>();
             updateContent.put(INTERACTIONS_RESPONSE_FIELD, finalResult);
@@ -980,6 +1002,162 @@ public class MLPlanExecuteAndReflectAgentRunner implements MLAgentRunner {
         } catch (Exception e) {
             log.error("Summary extraction failed", e);
             throw new RuntimeException("Failed to extract summary from response", e);
+        }
+    }
+
+    /**
+     * Extract aggregated token usage from executor (MLChatAgentRunner) response
+     * The executor returns its own aggregated token usage as a separate tensor
+     *
+     * @param modelOutput The executor's model output
+     * @param step Current step number
+     * @param stepDescription Description of the step
+     * @param tracker Token usage tracker
+     */
+    private void extractExecutorTokenUsage(ModelTensorOutput modelOutput, int step, String stepDescription, TokenUsageTracker tracker) {
+        if (tracker == null || modelOutput == null) {
+            return;
+        }
+
+        try {
+            // Look for the token_usage tensor in the executor's response
+            for (ModelTensors modelTensors : modelOutput.getMlModelOutputs()) {
+                for (ModelTensor tensor : modelTensors.getMlModelTensors()) {
+                    if ("token_usage".equals(tensor.getName())) {
+                        Map<String, ?> tokenUsageData = tensor.getDataAsMap();
+                        if (tokenUsageData != null && tokenUsageData.containsKey("breakdown")) {
+                            // The executor returns aggregated usage with breakdown
+                            // We need to add each call from the breakdown to our tracker
+                            List<Map<String, Object>> breakdown = (List<Map<String, Object>>) tokenUsageData.get("breakdown");
+                            if (breakdown != null) {
+                                for (Map<String, Object> call : breakdown) {
+                                    String callType = (String) call.get("call_type");
+                                    int callNumber = call.containsKey("call") ? ((Number) call.get("call")).intValue() : 1;
+
+                                    // Create a usage map with the token counts
+                                    Map<String, Object> usage = new HashMap<>();
+                                    usage.put("inputTokens", call.get("input_tokens"));
+                                    usage.put("outputTokens", call.get("output_tokens"));
+
+                                    // Add with executor prefix and step description
+                                    tracker.addUsage("executor:" + callType, step, callNumber, stepDescription, usage);
+                                }
+                                log.debug("Extracted {} executor token usage calls for step {}", breakdown.size(), step);
+                            }
+                        }
+                        return; // Found and processed token_usage tensor
+                    }
+                }
+            }
+            log.debug("No token_usage tensor found in executor response for step {}", step);
+        } catch (Exception e) {
+            log.warn("Failed to extract executor token usage for step {}", step, e);
+        }
+    }
+
+    /**
+     * Extract token usage from LLM model output and add to tracker
+     *
+     * @param modelOutput The model output containing token usage
+     * @param callType Type of LLM call (e.g., "planner", "executor")
+     * @param step Current step number
+     * @param tracker Token usage tracker
+     */
+    private void extractAndTrackTokenUsage(
+        ModelTensorOutput modelOutput,
+        String callType,
+        int step,
+        String stepDescription,
+        TokenUsageTracker tracker
+    ) {
+        if (tracker == null || modelOutput == null) {
+            return;
+        }
+
+        try {
+            // Extract token usage from first tensor's dataAsMap
+            if (modelOutput.getMlModelOutputs() != null && !modelOutput.getMlModelOutputs().isEmpty()) {
+                ModelTensors firstOutput = modelOutput.getMlModelOutputs().get(0);
+                if (firstOutput.getMlModelTensors() != null && !firstOutput.getMlModelTensors().isEmpty()) {
+                    ModelTensor firstTensor = firstOutput.getMlModelTensors().get(0);
+                    Map<String, ?> dataAsMap = firstTensor.getDataAsMap();
+
+                    if (dataAsMap != null && dataAsMap.containsKey("token_usage")) {
+                        Object tokenUsageObj = dataAsMap.get("token_usage");
+                        if (tokenUsageObj instanceof Map) {
+                            Map<String, Object> tokenUsage = (Map<String, Object>) tokenUsageObj;
+                            tracker.addUsage(callType, step, stepDescription, tokenUsage);
+                            log.debug("Tracked token usage for {} at step {}: {}", callType, step, tokenUsage);
+                        }
+                    } else {
+                        log.debug("No token usage found in {} response at step {}", callType, step);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to extract token usage for {} at step {}", callType, step, e);
+        }
+    }
+
+    // Overload for backward compatibility
+    private void extractAndTrackTokenUsage(ModelTensorOutput modelOutput, String callType, int step, TokenUsageTracker tracker) {
+        extractAndTrackTokenUsage(modelOutput, callType, step, null, tracker);
+    }
+
+    /**
+     * Log aggregated token usage summary for the entire plan & execute workflow
+     */
+    private void logTokenUsageSummary() {
+        if (tokenUsageTracker == null || !tokenUsageTracker.hasUsage()) {
+            log.info("No token usage tracked for this plan & execute workflow");
+            return;
+        }
+
+        try {
+            Map<String, Object> aggregatedUsage = tokenUsageTracker.getAggregatedUsage();
+
+            // Calculate breakdown by call type (planner vs executor)
+            List<Map<String, Object>> breakdown = (List<Map<String, Object>>) aggregatedUsage.get("breakdown");
+            long plannerInputTokens = 0;
+            long plannerOutputTokens = 0;
+            long executorInputTokens = 0;
+            long executorOutputTokens = 0;
+
+            for (Map<String, Object> call : breakdown) {
+                String callType = (String) call.get("call_type");
+                long inputTokens = ((Number) call.get("input_tokens")).longValue();
+                long outputTokens = ((Number) call.get("output_tokens")).longValue();
+
+                if ("planner".equals(callType)) {
+                    plannerInputTokens += inputTokens;
+                    plannerOutputTokens += outputTokens;
+                } else if ("executor".equals(callType)) {
+                    executorInputTokens += inputTokens;
+                    executorOutputTokens += outputTokens;
+                }
+            }
+
+            // Log structured summary with breakdown by agent type
+            log
+                .info(
+                    "Plan & Execute Agent Token Usage Summary - Total Input: {}, Total Output: {}, Total: {}, Calls: {} | Planner (Input: {}, Output: {}, Total: {}) | Executor (Input: {}, Output: {}, Total: {})",
+                    aggregatedUsage.get("total_input_tokens"),
+                    aggregatedUsage.get("total_output_tokens"),
+                    aggregatedUsage.get("total_tokens"),
+                    aggregatedUsage.get("call_count"),
+                    plannerInputTokens,
+                    plannerOutputTokens,
+                    plannerInputTokens + plannerOutputTokens,
+                    executorInputTokens,
+                    executorOutputTokens,
+                    executorInputTokens + executorOutputTokens
+                );
+
+            // Log full details as JSON for detailed analysis
+            log.info("Plan & Execute Agent Token Usage Details: {}", gson.toJson(aggregatedUsage));
+
+        } catch (Exception e) {
+            log.error("Failed to log token usage summary", e);
         }
     }
 }

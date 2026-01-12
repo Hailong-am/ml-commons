@@ -110,12 +110,22 @@ public class StreamingWrapper {
         boolean verbose,
         List<ModelTensors> cotModelTensors,
         Map<String, Object> additionalInfo,
-        String finalAnswer
+        String finalAnswer,
+        TokenUsageTracker tokenUsageTracker
     ) {
         if (isStreaming) {
             listener.onResponse("Streaming completed");
         } else {
-            returnFinalResponse(sessionId, listener, parentInteractionId, verbose, cotModelTensors, additionalInfo, finalAnswer);
+            returnFinalResponse(
+                sessionId,
+                listener,
+                parentInteractionId,
+                verbose,
+                cotModelTensors,
+                additionalInfo,
+                finalAnswer,
+                tokenUsageTracker
+            );
         }
     }
 

@@ -255,8 +255,7 @@ public class RestMLExecuteStreamAction extends BaseRestHandler {
                     log.error("Failed to parse or process request", e);
                     return Mono.error(e);
                 }
-            }).doOnNext(channel::sendChunk)
-            .onErrorResume(ex -> {
+            }).doOnNext(channel::sendChunk).onErrorResume(ex -> {
                 log.error("Error occurred", ex);
                 try {
                     String errorMessage = ex instanceof IOException

@@ -250,6 +250,10 @@ public class ConnectorUtils {
                 )) {
             throw new IllegalArgumentException("guardrails triggered for LLM output");
         }
+
+        // Extract token usage from raw response before processing
+        Map<String, Object> tokenUsage = extractTokenUsage(modelResponse);
+
         List<ModelTensor> modelTensors = new ArrayList<>();
         Optional<ConnectorAction> connectorAction = connector.findAction(action);
         if (connectorAction.isEmpty()) {
@@ -267,6 +271,10 @@ public class ConnectorUtils {
             Object filteredOutput = JsonPath.read(modelResponse, responseFilter);
             MLResultDataType dataType = parseMLResultDataTypeFromResponseFilter(responseFilter);
             List<ModelTensor> processedResponse = MLPostProcessFunction.get(postProcessFunction).apply(filteredOutput, dataType);
+
+            // Add token usage to the first tensor if available
+            addTokenUsageToTensors(processedResponse, tokenUsage);
+
             return ModelTensors.builder().mlModelTensors(processedResponse).build();
         }
 
@@ -304,7 +312,83 @@ public class ConnectorUtils {
                 connector.parseResponse(filteredResponse, modelTensors, scriptReturnModelTensor);
             }
         }
+
+        // Add token usage to the tensors
+        addTokenUsageToTensors(modelTensors, tokenUsage);
+
         return ModelTensors.builder().mlModelTensors(modelTensors).build();
+    }
+
+    /**
+     * Extract token usage information from LLM response
+     * Supports Claude, OpenAI, and Bedrock response formats
+     *
+     * @param modelResponse Raw LLM response string
+     * @return Map containing token usage data, or null if not found
+     */
+    private static Map<String, Object> extractTokenUsage(String modelResponse) {
+        if (modelResponse == null || modelResponse.isEmpty()) {
+            return null;
+        }
+
+        try {
+            if (org.opensearch.ml.common.utils.StringUtils.isJson(modelResponse)) {
+                // Try different paths for different LLM providers
+                // Claude format: $.usage
+                // OpenAI format: $.usage
+                // Bedrock format: varies by model
+
+                Object usageObj = null;
+                try {
+                    usageObj = JsonPath.read(modelResponse, "$.usage");
+                } catch (Exception e) {
+                    log.debug("No usage field found at $.usage");
+                }
+
+                if (usageObj instanceof Map) {
+                    Map<String, Object> usage = (Map<String, Object>) usageObj;
+                    log.debug("Extracted token usage: {}", usage);
+                    return usage;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed to extract token usage from response", e);
+        }
+        return null;
+    }
+
+    /**
+     * Add token usage data to model tensors
+     * Adds usage to the first tensor's dataAsMap
+     *
+     * @param modelTensors List of model tensors
+     * @param tokenUsage Token usage data to add
+     */
+    private static void addTokenUsageToTensors(List<ModelTensor> modelTensors, Map<String, Object> tokenUsage) {
+        if (modelTensors == null || modelTensors.isEmpty() || tokenUsage == null || tokenUsage.isEmpty()) {
+            return;
+        }
+
+        try {
+            ModelTensor firstTensor = modelTensors.get(0);
+            Map<String, ?> existingDataAsMap = firstTensor.getDataAsMap();
+
+            if (existingDataAsMap != null) {
+                // Create a new map with existing data plus token usage
+                Map<String, Object> enhancedMap = new HashMap<>(existingDataAsMap);
+                enhancedMap.put("token_usage", tokenUsage);
+                firstTensor.setDataAsMap(enhancedMap);
+                log.debug("Added token usage to model tensor: {}", tokenUsage);
+            } else {
+                // Create new map with just token usage
+                Map<String, Object> newMap = new HashMap<>();
+                newMap.put("token_usage", tokenUsage);
+                firstTensor.setDataAsMap(newMap);
+                log.debug("Created new dataAsMap with token usage: {}", tokenUsage);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to add token usage to model tensors", e);
+        }
     }
 
     private static MLResultDataType parseMLResultDataTypeFromResponseFilter(String responseFilter) {

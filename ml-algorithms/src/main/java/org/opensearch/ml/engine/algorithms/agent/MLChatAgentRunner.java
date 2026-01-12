@@ -160,6 +160,9 @@ public class MLChatAgentRunner implements MLAgentRunner {
     private StreamingWrapper streamingWrapper;
     private static HookRegistry hookRegistry;
 
+    // Token usage tracking
+    private TokenUsageTracker tokenUsageTracker;
+
     public MLChatAgentRunner(
         Client client,
         Settings settings,
@@ -209,6 +212,9 @@ public class MLChatAgentRunner implements MLAgentRunner {
 
         params.putAll(inputParams);
         this.streamingWrapper = new StreamingWrapper(channel, client, params);
+
+        // Initialize token usage tracker for this run
+        this.tokenUsageTracker = new TokenUsageTracker();
 
         String llmInterface = params.get(LLM_INTERFACE);
         FunctionCalling functionCalling = FunctionCallingFactory.create(llmInterface);
@@ -392,6 +398,9 @@ public class MLChatAgentRunner implements MLAgentRunner {
                 if (finalI % 2 == 0) {
                     MLTaskResponse llmResponse = (MLTaskResponse) output;
                     ModelTensorOutput tmpModelTensorOutput = (ModelTensorOutput) llmResponse.getOutput();
+
+                    // Extract and track token usage from LLM call
+                    extractAndTrackTokenUsage(tmpModelTensorOutput, "react", (finalI / 2) + 1, tokenUsageTracker);
 
                     List<String> llmResponsePatterns = gson.fromJson(tmpParameters.get("llm_response_pattern"), List.class);
                     Map<String, String> modelOutput = parseLLMOutput(
@@ -644,6 +653,7 @@ public class MLChatAgentRunner implements MLAgentRunner {
                 }
             }, e -> {
                 log.error("Failed to run chat agent", e);
+                logTokenUsageSummary();
                 listener.onFailure(e);
             });
             if (nextStepListener != null) {
@@ -875,6 +885,9 @@ public class MLChatAgentRunner implements MLAgentRunner {
         Map<String, Object> additionalInfo,
         String finalAnswer
     ) {
+        // Log aggregated token usage
+        logTokenUsageSummary();
+
         // Send completion chunk for streaming
         streamingWrapper.sendCompletionChunk(sessionId, parentInteractionId);
 
@@ -893,7 +906,8 @@ public class MLChatAgentRunner implements MLAgentRunner {
                                 verbose,
                                 cotModelTensors,
                                 additionalInfo,
-                                copyOfFinalAnswer
+                                copyOfFinalAnswer,
+                                tokenUsageTracker
                             );
                         }, e -> { listener.onFailure(e); })
                     );
@@ -901,7 +915,16 @@ public class MLChatAgentRunner implements MLAgentRunner {
             saveMessage(memory, question, finalAnswer, sessionId, parentInteractionId, traceNumber, true, traceDisabled, saveTraceListener);
         } else {
             streamingWrapper
-                .sendFinalResponse(sessionId, listener, parentInteractionId, verbose, cotModelTensors, additionalInfo, finalAnswer);
+                .sendFinalResponse(
+                    sessionId,
+                    listener,
+                    parentInteractionId,
+                    verbose,
+                    cotModelTensors,
+                    additionalInfo,
+                    finalAnswer,
+                    tokenUsageTracker
+                );
         }
     }
 
@@ -1006,7 +1029,8 @@ public class MLChatAgentRunner implements MLAgentRunner {
         boolean verbose,
         List<ModelTensors> cotModelTensors, // AtomicBoolean getFinalAnswer,
         Map<String, Object> additionalInfo,
-        String finalAnswer2
+        String finalAnswer2,
+        TokenUsageTracker tokenUsageTracker
     ) {
         cotModelTensors
             .add(
@@ -1024,6 +1048,21 @@ public class MLChatAgentRunner implements MLAgentRunner {
                         .build()
                 )
         );
+
+        // Add token usage to the response
+        if (tokenUsageTracker != null && tokenUsageTracker.hasUsage()) {
+            Map<String, Object> tokenUsageData = tokenUsageTracker.getAggregatedUsage();
+            ModelTensor tokenUsageTensor = ModelTensor.builder().name("token_usage").dataAsMap(tokenUsageData).build();
+
+            ModelTensors tokenUsageOutput = ModelTensors.builder().mlModelTensors(List.of(tokenUsageTensor)).build();
+
+            if (verbose) {
+                cotModelTensors.add(tokenUsageOutput);
+            } else {
+                finalModelTensors.add(tokenUsageOutput);
+            }
+        }
+
         if (verbose) {
             listener.onResponse(ModelTensorOutput.builder().mlModelOutputs(cotModelTensors).build());
         } else {
@@ -1173,6 +1212,10 @@ public class MLChatAgentRunner implements MLAgentRunner {
                 tenantId
             );
             client.execute(MLPredictionTaskAction.INSTANCE, request, ActionListener.wrap(response -> {
+                // Extract and track token usage from summary generation
+                ModelTensorOutput summaryOutput = (ModelTensorOutput) response.getOutput();
+                extractAndTrackTokenUsage(summaryOutput, "summary", 1, tokenUsageTracker);
+
                 String summary = extractSummaryFromResponse(response, summaryParams);
                 if (summary == null) {
                     listener.onFailure(new RuntimeException("Empty or invalid LLM summary response"));
@@ -1443,6 +1486,101 @@ public class MLChatAgentRunner implements MLAgentRunner {
             }
         } catch (Exception e) {
             listener.onFailure(e);
+        }
+    }
+
+    /**
+     * Extract token usage from LLM model output and add to tracker
+     *
+     * @param modelOutput The model output containing token usage
+     * @param callType Type of LLM call (e.g., "react", "summary")
+     * @param iteration Current iteration number
+     * @param tracker Token usage tracker
+     */
+    private void extractAndTrackTokenUsage(ModelTensorOutput modelOutput, String callType, int iteration, TokenUsageTracker tracker) {
+        if (tracker == null || modelOutput == null) {
+            return;
+        }
+
+        try {
+            // Extract token usage from first tensor's dataAsMap
+            if (modelOutput.getMlModelOutputs() != null && !modelOutput.getMlModelOutputs().isEmpty()) {
+                ModelTensors firstOutput = modelOutput.getMlModelOutputs().get(0);
+                if (firstOutput.getMlModelTensors() != null && !firstOutput.getMlModelTensors().isEmpty()) {
+                    ModelTensor firstTensor = firstOutput.getMlModelTensors().get(0);
+                    Map<String, ?> dataAsMap = firstTensor.getDataAsMap();
+
+                    if (dataAsMap != null && dataAsMap.containsKey("token_usage")) {
+                        Object tokenUsageObj = dataAsMap.get("token_usage");
+                        if (tokenUsageObj instanceof Map) {
+                            Map<String, Object> tokenUsage = (Map<String, Object>) tokenUsageObj;
+                            tracker.addUsage(callType, iteration, tokenUsage);
+                            log.debug("Tracked token usage for {} at iteration {}: {}", callType, iteration, tokenUsage);
+                        }
+                    } else {
+                        log.debug("No token usage found in {} response at iteration {}", callType, iteration);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to extract token usage for {} at iteration {}", callType, iteration, e);
+        }
+    }
+
+    /**
+     * Log aggregated token usage summary for the chat agent workflow
+     */
+    private void logTokenUsageSummary() {
+        if (tokenUsageTracker == null || !tokenUsageTracker.hasUsage()) {
+            log.info("No token usage tracked for this chat agent workflow");
+            return;
+        }
+
+        try {
+            Map<String, Object> aggregatedUsage = tokenUsageTracker.getAggregatedUsage();
+
+            // Calculate breakdown by call type (react vs summary)
+            List<Map<String, Object>> breakdown = (List<Map<String, Object>>) aggregatedUsage.get("breakdown");
+            long reactInputTokens = 0;
+            long reactOutputTokens = 0;
+            long summaryInputTokens = 0;
+            long summaryOutputTokens = 0;
+
+            for (Map<String, Object> call : breakdown) {
+                String callType = (String) call.get("call_type");
+                long inputTokens = ((Number) call.get("input_tokens")).longValue();
+                long outputTokens = ((Number) call.get("output_tokens")).longValue();
+
+                if ("react".equals(callType)) {
+                    reactInputTokens += inputTokens;
+                    reactOutputTokens += outputTokens;
+                } else if ("summary".equals(callType)) {
+                    summaryInputTokens += inputTokens;
+                    summaryOutputTokens += outputTokens;
+                }
+            }
+
+            // Log structured summary with breakdown by call type
+            log
+                .info(
+                    "Chat Agent Token Usage Summary - Total Input: {}, Total Output: {}, Total: {}, Calls: {} | ReAct (Input: {}, Output: {}, Total: {}) | Summary (Input: {}, Output: {}, Total: {})",
+                    aggregatedUsage.get("total_input_tokens"),
+                    aggregatedUsage.get("total_output_tokens"),
+                    aggregatedUsage.get("total_tokens"),
+                    aggregatedUsage.get("call_count"),
+                    reactInputTokens,
+                    reactOutputTokens,
+                    reactInputTokens + reactOutputTokens,
+                    summaryInputTokens,
+                    summaryOutputTokens,
+                    summaryInputTokens + summaryOutputTokens
+                );
+
+            // Log full details as JSON for detailed analysis
+            log.info("Chat Agent Token Usage Details: {}", gson.toJson(aggregatedUsage));
+
+        } catch (Exception e) {
+            log.error("Failed to log token usage summary", e);
         }
     }
 
