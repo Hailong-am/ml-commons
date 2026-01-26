@@ -511,13 +511,16 @@ public class BedrockStreamingHandler extends BaseStreamingHandler {
                     .create(AwsSessionCredentials.create(connector.getAccessKey(), connector.getSecretKey(), connector.getSessionToken()))
                 : StaticCredentialsProvider.create(AwsBasicCredentials.create(connector.getAccessKey(), connector.getSecretKey()));
 
-         return AccessController.doPrivileged(()-> BedrockRuntimeAsyncClient
-                .builder()
-                .region(Region.of(connector.getRegion()))
-                .credentialsProvider(awsCredentialsProvider)
-                .httpClient(httpClient)
-                .build());
-});
+            return AccessController
+                .doPrivileged(
+                    () -> BedrockRuntimeAsyncClient
+                        .builder()
+                        .region(Region.of(connector.getRegion()))
+                        .credentialsProvider(awsCredentialsProvider)
+                        .httpClient(httpClient)
+                        .build()
+                );
+        });
     }
 
     private List<SystemContentBlock> parseSystemMessages(JsonNode systemArray) {
