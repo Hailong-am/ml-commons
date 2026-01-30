@@ -5,7 +5,6 @@
 
 package org.opensearch.ml.common.httpclient;
 
-import java.lang.reflect.Field;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -182,7 +181,7 @@ public class MLMetricsInstrumentedHttpClient implements SdkAsyncHttpClient {
         log.info("│ PoolUtilization: {}                                            │", String.format("%.1f%%", poolUtilization));
         log.info("│ PeakConcurrency: {}                                            │", peakConcurrentRequests.get());
         log.info("│ SlowRequestCount: {}                                           │", slowRequestCount.get());
-        log.info("│ HttpClientName: {}                                             │", getHttpClientName());
+        log.info("│ HttpClientName: {}                                             │", clientName());
         log.info("└────────────────────────────────────────────────────────────────┘");
     }
 
@@ -206,30 +205,6 @@ public class MLMetricsInstrumentedHttpClient implements SdkAsyncHttpClient {
         } else {
             return String.format("%.2fs", nanos / 1_000_000_000.0);
         }
-    }
-
-    private String getHttpClientName() {
-        // Try to extract the actual client name from delegate
-        String className = delegate.getClass().getSimpleName();
-        if (className.contains("Netty")) {
-            return "Netty";
-        } else if (className.contains("Apache")) {
-            return "Apache";
-        } else if (className.contains("Validatable")) {
-            // For MLValidatableAsyncHttpClient, look at its delegate
-            try {
-                Field delegateField = delegate.getClass().getDeclaredField("delegate");
-                delegateField.setAccessible(true);
-                Object innerDelegate = delegateField.get(delegate);
-                String innerClassName = innerDelegate.getClass().getSimpleName();
-                if (innerClassName.contains("Netty")) {
-                    return "Netty";
-                }
-            } catch (Exception e) {
-                // Ignore, fall through to default
-            }
-        }
-        return className;
     }
 
     @Override

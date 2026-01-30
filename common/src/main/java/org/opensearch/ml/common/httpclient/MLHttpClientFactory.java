@@ -18,7 +18,7 @@ import software.amazon.awssdk.metrics.MetricPublisher;
 @Log4j2
 public class MLHttpClientFactory {
 
-//    private static final boolean ENABLE_METRICS = Boolean.parseBoolean(System.getProperty("ml.http.client.metrics.enabled", "true"));
+    // private static final boolean ENABLE_METRICS = Boolean.parseBoolean(System.getProperty("ml.http.client.metrics.enabled", "true"));
     private static final boolean ENABLE_METRICS = true;
 
     public static SdkAsyncHttpClient getAsyncHttpClient(
