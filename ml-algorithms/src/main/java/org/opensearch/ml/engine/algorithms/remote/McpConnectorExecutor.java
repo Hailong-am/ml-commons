@@ -96,6 +96,7 @@ public class McpConnectorExecutor extends AbstractConnectorExecutor {
             };
 
             // Create transport
+            // Note: MCP library creates HttpClient internally, metrics not currently supported
             McpClientTransport transport = HttpClientSseClientTransport
                 .builder(mcpServerUrl)
                 .sseEndpoint(sseEndpoint)

@@ -92,6 +92,7 @@ public class McpStreamableHttpConnectorExecutor extends AbstractConnectorExecuto
             };
 
             // Create streamable HTTP transport
+            // Note: MCP library creates HttpClient internally, metrics not currently supported
             McpClientTransport transport = HttpClientStreamableHttpTransport
                 .builder(mcpServerUrl)
                 .endpoint(endpoint)

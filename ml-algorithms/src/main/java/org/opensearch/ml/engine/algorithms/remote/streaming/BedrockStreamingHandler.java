@@ -28,6 +28,7 @@ import org.opensearch.core.rest.RestStatus;
 import org.opensearch.ml.common.agui.*;
 import org.opensearch.ml.common.connector.AwsConnector;
 import org.opensearch.ml.common.exception.MLException;
+import org.opensearch.ml.common.httpclient.MLHttpClientFactory;
 import org.opensearch.ml.common.output.model.ModelTensor;
 import org.opensearch.ml.common.output.model.ModelTensorOutput;
 import org.opensearch.ml.common.output.model.ModelTensors;
@@ -46,8 +47,10 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.core.document.Document;
 import software.amazon.awssdk.http.async.SdkAsyncHttpClient;
+import software.amazon.awssdk.metrics.MetricPublisher;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeAsyncClient;
 import software.amazon.awssdk.services.bedrockruntime.model.ContentBlock;
@@ -107,6 +110,11 @@ public class BedrockStreamingHandler extends BaseStreamingHandler {
         String payload,
         StreamPredictActionListener<MLTaskResponse, ?> listener
     ) {
+        // Track request timing
+        long requestStartTime = System.currentTimeMillis();
+        AtomicReference<Long> firstByteTime = new AtomicReference<>();
+        AtomicReference<Integer> eventCount = new AtomicReference<>(0);
+
         try {
             AtomicBoolean isStreamClosed = new AtomicBoolean(false);
             AtomicBoolean firstToolSent = new AtomicBoolean(false);
@@ -122,9 +130,31 @@ public class BedrockStreamingHandler extends BaseStreamingHandler {
             // Parse payload to build ConverseStreamRequest
             ConverseStreamRequest request = buildConverseStreamRequest(payload, parameters);
 
+            // Extract model info for logging
+            String modelId = parameters != null ? parameters.get("model") : "unknown";
+            log
+                .info(
+                    "BEDROCK_REQUEST_START - Model: {}, Region: {}, Action: {}, Payload size: {} bytes",
+                    modelId,
+                    connector.getRegion(),
+                    action,
+                    payload != null ? payload.length() : 0
+                );
+
             ConverseStreamResponseHandler handler = ConverseStreamResponseHandler.builder().onResponse(response -> {}).onError(error -> {
-                log.error("Converse stream error: {}", error.getMessage());
+                long errorTime = System.currentTimeMillis();
+                long durationMs = errorTime - requestStartTime;
+                log
+                    .error(
+                        "BEDROCK_ERROR - Model: {}, Duration: {}ms, Error: {}, Type: {}",
+                        modelId,
+                        durationMs,
+                        error.getMessage(),
+                        error.getClass().getSimpleName()
+                    );
+
                 if (isThrottlingError(error)) {
+                    log.warn("BEDROCK_THROTTLED - Model: {}, Duration: {}ms - Bedrock throttling detected", modelId, durationMs);
                     listener
                         .onFailure(
                             new RemoteConnectorThrottlingException(
@@ -136,18 +166,66 @@ public class BedrockStreamingHandler extends BaseStreamingHandler {
                         );
                 } else if (isClientError(error)) {
                     // 4XX errors
+                    log.warn("BEDROCK_CLIENT_ERROR - Model: {}, Duration: {}ms, Status: 4xx", modelId, durationMs);
                     listener.onFailure(new OpenSearchStatusException(REMOTE_SERVICE_ERROR + error.getMessage(), RestStatus.BAD_REQUEST));
                 } else {
                     // 5xx errors
+                    log.error("BEDROCK_SERVER_ERROR - Model: {}, Duration: {}ms, Status: 5xx", modelId, durationMs);
                     listener.onFailure(new MLException(REMOTE_SERVICE_ERROR + error.getMessage(), error));
                 }
             }).onComplete(() -> {
+                long completionTime = System.currentTimeMillis();
+                long totalDurationMs = completionTime - requestStartTime;
+                Long ttfb = firstByteTime.get();
+                long ttfbMs = ttfb != null ? (ttfb - requestStartTime) : -1;
+
+                log
+                    .info(
+                        "BEDROCK_REQUEST_COMPLETE - Model: {}, TotalDuration: {}ms, TimeToFirstByte: {}ms, " + "EventCount: {}, State: {}",
+                        modelId,
+                        totalDurationMs,
+                        ttfbMs,
+                        eventCount.get(),
+                        currentState.get()
+                    );
+
+                // Warn if request took too long
+                if (totalDurationMs > 30000) {
+                    log
+                        .warn(
+                            "BEDROCK_SLOW_REQUEST - Model: {} took {}ms to complete. "
+                                + "This may be holding connections and causing pool exhaustion. "
+                                + "Consider: 1) Using a faster model, 2) Increasing connection pool size, 3) Adding request timeout",
+                            modelId,
+                            totalDurationMs
+                        );
+                } else if (ttfbMs > 5000 && ttfbMs != -1) {
+                    log
+                        .warn(
+                            "BEDROCK_SLOW_TTFB - Model: {} took {}ms for first byte. "
+                                + "Slow model initialization may cause connection pool buildup.",
+                            modelId,
+                            ttfbMs
+                        );
+                }
+
                 if (currentState.get() != StreamState.WAITING_FOR_TOOL_RESULT) {
                     sendCompletionResponse(isStreamClosed, listener);
                 } else {
                     log.debug("Tool execution in progress - keeping stream open");
                 }
             }).subscriber(event -> {
+                // Track first byte time
+                if (firstByteTime.get() == null) {
+                    long now = System.currentTimeMillis();
+                    firstByteTime.set(now);
+                    long ttfb = now - requestStartTime;
+                    log.debug("BEDROCK_FIRST_BYTE - Model: {}, TTFB: {}ms", modelId, ttfb);
+                }
+
+                // Increment event counter
+                eventCount.updateAndGet(v -> v + 1);
+
                 log.debug("BEDROCK_RAW_EVENT: Type={}, Event={}", event.sdkEventType(), event);
                 handleStreamEvent(
                     event,
@@ -165,7 +243,9 @@ public class BedrockStreamingHandler extends BaseStreamingHandler {
             // Start streaming
             bedrockClient.converseStream(request, handler);
         } catch (Exception e) {
-            log.error("Failed to execute Bedrock streaming", e);
+            long errorTime = System.currentTimeMillis();
+            long durationMs = errorTime - requestStartTime;
+            log.error("BEDROCK_EXCEPTION - Duration: {}ms, Failed to execute Bedrock streaming", durationMs, e);
             handleError(e, listener);
         }
     }
@@ -511,15 +591,21 @@ public class BedrockStreamingHandler extends BaseStreamingHandler {
                     .create(AwsSessionCredentials.create(connector.getAccessKey(), connector.getSecretKey(), connector.getSessionToken()))
                 : StaticCredentialsProvider.create(AwsBasicCredentials.create(connector.getAccessKey(), connector.getSecretKey()));
 
-            return AccessController
-                .doPrivileged(
-                    () -> BedrockRuntimeAsyncClient
-                        .builder()
-                        .region(Region.of(connector.getRegion()))
-                        .credentialsProvider(awsCredentialsProvider)
-                        .httpClient(httpClient)
-                        .build()
-                );
+            return AccessController.doPrivileged(() -> {
+                var builder = BedrockRuntimeAsyncClient
+                    .builder()
+                    .region(Region.of(connector.getRegion()))
+                    .credentialsProvider(awsCredentialsProvider)
+                    .httpClient(httpClient);
+
+                // Add metrics if enabled
+                MetricPublisher metricPublisher = MLHttpClientFactory.createMetricPublisher();
+                if (metricPublisher != null) {
+                    builder.overrideConfiguration(ClientOverrideConfiguration.builder().addMetricPublisher(metricPublisher).build());
+                }
+
+                return builder.build();
+            });
         });
     }
 

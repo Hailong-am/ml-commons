@@ -61,8 +61,16 @@ public class McpStreamableHttpTool implements WithModelTool {
             Map<String, String> parameters = ToolUtils.extractInputParameters(originalParameters, attributes);
             String input = parameters.get("input");
             Map<String, Object> inputArgs = StringUtils.fromJson(input, "input");
+
+            // Log MCP tool call request
+            log.info("MCP Streamable HTTP Tool Call - Tool: {}, Input: {}", this.name, StringUtils.toJson(inputArgs));
+
             McpSchema.CallToolResult result = mcpSyncClient.callTool(new McpSchema.CallToolRequest(this.name, inputArgs));
             String resultJson = StringUtils.toJson(result.content());
+
+            // Log MCP tool call response
+            log.info("MCP Streamable HTTP Tool Response - Tool: {}, Result: {}", this.name, resultJson);
+
             @SuppressWarnings("unchecked")
             T response = (T) resultJson;
             listener.onResponse(response);
