@@ -127,11 +127,11 @@ public class HttpJsonConnectorExecutor extends AbstractConnectorExecutor {
             // Wrap listener to offload response processing from Netty I/O thread to ML thread pool
             // This prevents blocking I/O threads during JSON parsing and model tensor creation
             ThreadedActionListener<Tuple<Integer, ModelTensors>> threadedListener = new ThreadedActionListener<>(
-                    log,
-                    client.threadPool(),
-                    "opensearch_ml_predict_remote",
-                    actionListener,
-                    false
+                log,
+                client.threadPool(),
+                "opensearch_ml_predict_remote",
+                actionListener,
+                false
             );
             ThreadContext.StoredContext storedContext = client.threadPool().getThreadContext().newStoredContext(true);
             AsyncExecuteRequest executeRequest = AsyncExecuteRequest
@@ -201,13 +201,13 @@ public class HttpJsonConnectorExecutor extends AbstractConnectorExecutor {
             Duration readTimeout = Duration.ofSeconds(super.getConnectorClientConfig().getReadTimeout());
             Integer maxConnection = super.getConnectorClientConfig().getMaxConnections();
             log
-                    .info(
-                            "AwsConnectorExecutor creating HTTP client for connector: {} - maxConnections: {}, connectionTimeout: {}s, readTimeout: {}s",
-                            connector.getName(),
-                            maxConnection,
-                            super.getConnectorClientConfig().getConnectionTimeout(),
-                            super.getConnectorClientConfig().getReadTimeout()
-                    );
+                .info(
+                    "AwsConnectorExecutor creating HTTP client for connector: {} - maxConnections: {}, connectionTimeout: {}s, readTimeout: {}s",
+                    connector.getName(),
+                    maxConnection,
+                    super.getConnectorClientConfig().getConnectionTimeout(),
+                    super.getConnectorClientConfig().getReadTimeout()
+                );
             this.httpClientRef
                 .compareAndSet(
                     null,
