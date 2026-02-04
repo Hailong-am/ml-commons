@@ -89,6 +89,7 @@ public class McpToolsHelper {
                         sink.error(e);
                     });
 
+                log.info("Calling MCP tool: {}, request: {}", toolName, request.arguments());
                 actualTool.run(StringUtils.getParameterMap(request.arguments()), actionListener);
             })
         );
