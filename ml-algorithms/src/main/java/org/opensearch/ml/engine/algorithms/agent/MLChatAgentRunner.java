@@ -1012,7 +1012,8 @@ public class MLChatAgentRunner implements MLAgentRunner {
                     .onResponse(String.format(Locale.ROOT, "Failed to run the tool %s with the error message %s.", action, e.getMessage()));
             }
         } else { // TODO: add failure to interaction to let LLM regenerate ?
-            String res = String.format(Locale.ROOT, "Failed to run the tool %s due to wrong input %s.", action, actionInput);
+            String escapedActionInput = processTextDoc(actionInput);
+            String res = String.format(Locale.ROOT, "Failed to run the tool %s due to wrong input %s.", action, escapedActionInput);
             interactions
                 .add(
                     substitute(
