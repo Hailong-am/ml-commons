@@ -827,9 +827,7 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
             List<Message> allMessages = (List<Message>) result;
 
             // Apply history limit
-            List<Message> limitedHistory = messageHistoryLimit > 0 && allMessages.size() > messageHistoryLimit
-                ? allMessages.subList(allMessages.size() - messageHistoryLimit, allMessages.size())
-                : allMessages;
+            List<Message> limitedHistory = allMessages;
 
             AgentContextUtil.ensureLlmModelId(mlAgent, params);
 
