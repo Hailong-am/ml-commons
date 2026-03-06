@@ -409,6 +409,35 @@ public class AGUIInputConverter {
     }
 
     /**
+     * Builds a context string from an AG-UI context array.
+     * Returns null if the context array is null or empty.
+     *
+     * @param contextArray the context array from AG-UI input
+     * @return formatted context string, or null if no valid context
+     */
+    public static String buildContextString(JsonArray contextArray) {
+        if (contextArray == null || contextArray.size() == 0) {
+            return null;
+        }
+
+        StringBuilder contextBuilder = new StringBuilder();
+        contextBuilder.append("Context:\n");
+        for (JsonElement contextItemElement : contextArray) {
+            if (contextItemElement.isJsonObject()) {
+                JsonObject contextItem = contextItemElement.getAsJsonObject();
+                String description = getStringField(contextItem, "description");
+                String value = getStringField(contextItem, "value");
+
+                if (description != null && value != null) {
+                    contextBuilder.append("- ").append(description).append(": ").append(value).append("\n");
+                }
+            }
+        }
+        contextBuilder.append("\n");
+        return contextBuilder.toString();
+    }
+
+    /**
      * Appends context to the latest user message in the messages list.
      * Context is prepended to the last text content block of the latest user message.
      *
@@ -435,21 +464,10 @@ public class AGUIInputConverter {
             return;
         }
 
-        // Build context string from context array
-        StringBuilder contextBuilder = new StringBuilder();
-        contextBuilder.append("Context:\n");
-        for (JsonElement contextItemElement : contextArray) {
-            if (contextItemElement.isJsonObject()) {
-                JsonObject contextItem = contextItemElement.getAsJsonObject();
-                String description = getStringField(contextItem, "description");
-                String value = getStringField(contextItem, "value");
-
-                if (description != null && value != null) {
-                    contextBuilder.append("- ").append(description).append(": ").append(value).append("\n");
-                }
-            }
+        String contextString = buildContextString(contextArray);
+        if (contextString == null) {
+            return;
         }
-        contextBuilder.append("\n");
 
         // Prepend context to the last text content block
         List<ContentBlock> contentBlocks = latestUserMessage.getContent();
@@ -466,7 +484,7 @@ public class AGUIInputConverter {
 
             if (lastTextBlock != null) {
                 String originalText = lastTextBlock.getText();
-                String newText = contextBuilder.toString() + originalText;
+                String newText = contextString + originalText;
                 lastTextBlock.setText(newText);
                 log.debug("AG-UI: Appended context to latest user message");
             } else {

@@ -989,6 +989,7 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                             hookRegistry
                         );
                     } else {
+                        appendAGUIContextToQuestion(mlAgent, inputDataSet.getParameters());
                         mlAgentRunner.run(mlAgent, inputDataSet.getParameters(), agentActionListener, channel);
                     }
                 } catch (Exception e) {
@@ -1037,6 +1038,7 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                         hookRegistry
                     );
                 } else {
+                    appendAGUIContextToQuestion(mlAgent, inputDataSet.getParameters());
                     mlAgentRunner.run(mlAgent, inputDataSet.getParameters(), agentActionListener, channel);
                 }
             } catch (Exception e) {
@@ -1778,6 +1780,33 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
         }
 
         return mlAgent;
+    }
+
+    /**
+     * For non-unified interface AG_UI agents, appends AGUI context to the question parameter.
+     * This mirrors the context appending done in performInitialMemoryOperations for unified interface agents.
+     */
+    private void appendAGUIContextToQuestion(MLAgent mlAgent, Map<String, String> params) {
+        MLAgentType agentType = MLAgentType.from(mlAgent.getType());
+        if (agentType != MLAgentType.AG_UI) {
+            return;
+        }
+
+        String contextJson = params.get(AGUI_PARAM_CONTEXT);
+        if (contextJson == null) {
+            return;
+        }
+
+        JsonArray contextArray = JsonParser.parseString(contextJson).getAsJsonArray();
+        String contextString = AGUIInputConverter.buildContextString(contextArray);
+        if (contextString == null) {
+            return;
+        }
+
+        String question = params.get(QUESTION);
+        if (question != null) {
+            params.put(QUESTION, contextString + question);
+        }
     }
 
     @VisibleForTesting
