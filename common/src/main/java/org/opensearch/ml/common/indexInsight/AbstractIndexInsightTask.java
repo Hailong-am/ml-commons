@@ -477,14 +477,14 @@ public abstract class AbstractIndexInsightTask implements IndexInsightTask {
         String sourceIndex,
         ActionListener<String> listener
     ) {
-        Map<String, String> params = new HashMap<>();
-        params.put("prompt", prompt);
+        Map<String, String> parameters = new HashMap<>();
+        parameters.put("prompt", prompt);
 
         AgentMLInput agentInput = AgentMLInput
             .AgentMLInputBuilder()
             .agentId(agentId)
             .functionName(FunctionName.AGENT)
-            .inputDataset(RemoteInferenceInputDataSet.builder().parameters(params).build())
+            .inputDataset(RemoteInferenceInputDataSet.builder().parameters(parameters).build())
             .build();
 
         MLExecuteTaskRequest executeRequest = new MLExecuteTaskRequest(FunctionName.AGENT, agentInput);
