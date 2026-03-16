@@ -978,6 +978,104 @@ public class AGUIInputConverterTest {
         assertFalse("Message IDs should be unique", id1.equals(id2));
     }
 
+    // ==================== Tests for stripContext parameter ====================
+
+    @Test
+    public void testConvertToAGUIFormat_StripContext_UserMessageWithContext() {
+        String textWithContext = "Context:\n- file: test.txt\n- location: /home/user\n\nWhat is the content?";
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText(textWithContext);
+
+        Message message = new Message("user", List.of(textBlock));
+
+        // With stripContext=false (default)
+        List<Map<String, Object>> resultNoStrip = AGUIInputConverter.convertToAGUIFormat(List.of(message), false);
+        assertEquals(textWithContext, resultNoStrip.get(0).get("content"));
+
+        // With stripContext=true
+        List<Map<String, Object>> resultStrip = AGUIInputConverter.convertToAGUIFormat(List.of(message), true);
+        assertEquals("What is the content?", resultStrip.get(0).get("content"));
+    }
+
+    @Test
+    public void testConvertToAGUIFormat_StripContext_UserMessageWithoutContext() {
+        String textWithoutContext = "What is the content?";
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText(textWithoutContext);
+
+        Message message = new Message("user", List.of(textBlock));
+
+        // stripContext=true should not affect messages without context
+        List<Map<String, Object>> result = AGUIInputConverter.convertToAGUIFormat(List.of(message), true);
+        assertEquals(textWithoutContext, result.get(0).get("content"));
+    }
+
+    @Test
+    public void testConvertToAGUIFormat_StripContext_AssistantMessageNotAffected() {
+        String textWithContext = "Context:\n- file: test.txt\n\nHere is the answer";
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText(textWithContext);
+
+        Message message = new Message("assistant", List.of(textBlock));
+
+        // stripContext should only affect user messages, not assistant messages
+        List<Map<String, Object>> result = AGUIInputConverter.convertToAGUIFormat(List.of(message), true);
+        assertEquals(textWithContext, result.get(0).get("content"));
+    }
+
+    @Test
+    public void testConvertToAGUIFormat_StripContext_MultipleBlocks() {
+        String textWithContext = "Context:\n- image: screenshot.png\n\nDescribe this image";
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText(textWithContext);
+
+        ImageContent imageContent = new ImageContent();
+        imageContent.setType(SourceType.BASE64);
+        imageContent.setFormat("png");
+        imageContent.setData("base64data");
+
+        ContentBlock imageBlock = new ContentBlock();
+        imageBlock.setType(ContentType.IMAGE);
+        imageBlock.setImage(imageContent);
+
+        Message message = new Message("user", List.of(textBlock, imageBlock));
+
+        List<Map<String, Object>> result = AGUIInputConverter.convertToAGUIFormat(List.of(message), true);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> content = (List<Map<String, Object>>) result.get(0).get("content");
+        assertEquals(2, content.size());
+        assertEquals("text", content.get(0).get("type"));
+        assertEquals("Describe this image", content.get(0).get("text"));
+        assertEquals("binary", content.get(1).get("type"));
+    }
+
+    @Test
+    public void testConvertToAGUIFormat_StripContext_MixedMessages() {
+        String userTextWithContext = "Context:\n- query: test\n\nShow results";
+        ContentBlock userBlock = new ContentBlock();
+        userBlock.setType(ContentType.TEXT);
+        userBlock.setText(userTextWithContext);
+        Message userMsg = new Message("user", List.of(userBlock));
+
+        ContentBlock assistantBlock = new ContentBlock();
+        assistantBlock.setType(ContentType.TEXT);
+        assistantBlock.setText("Here are the results");
+        Message assistantMsg = new Message("assistant", List.of(assistantBlock));
+
+        List<Map<String, Object>> result = AGUIInputConverter.convertToAGUIFormat(List.of(userMsg, assistantMsg), true);
+
+        assertEquals(2, result.size());
+        // User message should have context stripped
+        assertEquals("Show results", result.get(0).get("content"));
+        // Assistant message should remain unchanged
+        assertEquals("Here are the results", result.get(1).get("content"));
+    }
+
     private String buildMinimalAGUIInput(String threadId, String runId) {
         JsonObject aguiInput = new JsonObject();
         aguiInput.addProperty("threadId", threadId);

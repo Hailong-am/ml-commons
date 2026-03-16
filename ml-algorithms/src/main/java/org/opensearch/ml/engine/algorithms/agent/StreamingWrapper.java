@@ -190,7 +190,8 @@ public class StreamingWrapper {
             return;
         }
         try {
-            List<Map<String, Object>> aguiMessages = AGUIInputConverter.convertToAGUIFormat(history);
+            // Strip context from user messages in snapshot (context was already sent in real-time during conversation)
+            List<Map<String, Object>> aguiMessages = AGUIInputConverter.convertToAGUIFormat(history, true);
             MessagesSnapshotEvent event = new MessagesSnapshotEvent(new ArrayList<>(aguiMessages));
 
             sendAGUIEvent(event, false);

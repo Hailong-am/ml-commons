@@ -342,6 +342,17 @@ public class AGUIInputConverter {
      * @return list of maps in AGUI message format
      */
     public static List<Map<String, Object>> convertToAGUIFormat(List<Message> messages) {
+        return convertToAGUIFormat(messages, false);
+    }
+
+    /**
+     * Converts internal Message objects to AGUI-compatible format
+     *
+     * @param messages the list of internal Message objects
+     * @param stripContext if true, removes context prefix from user messages
+     * @return list of maps in AGUI message format
+     */
+    public static List<Map<String, Object>> convertToAGUIFormat(List<Message> messages, boolean stripContext) {
         List<Map<String, Object>> aguiMessages = new ArrayList<>();
         if (messages == null) {
             return aguiMessages;
@@ -357,15 +368,23 @@ public class AGUIInputConverter {
             if (contentBlocks != null && !contentBlocks.isEmpty()) {
                 if (contentBlocks.size() == 1 && contentBlocks.get(0).getType() == ContentType.TEXT) {
                     // Single text block → string form
-                    aguiMsg.put(AGUI_FIELD_CONTENT, contentBlocks.get(0).getText());
+                    String text = contentBlocks.get(0).getText();
+                    if (stripContext && "user".equals(message.getRole())) {
+                        text = stripContextPrefix(text);
+                    }
+                    aguiMsg.put(AGUI_FIELD_CONTENT, text);
                 } else {
                     // Multiple/multimodal blocks → array form
                     List<Map<String, Object>> contentArray = new ArrayList<>();
                     for (ContentBlock block : contentBlocks) {
                         Map<String, Object> contentMap = new HashMap<>();
                         if (block.getType() == ContentType.TEXT) {
+                            String text = block.getText();
+                            if (stripContext && "user".equals(message.getRole())) {
+                                text = stripContextPrefix(text);
+                            }
                             contentMap.put("type", "text");
-                            contentMap.put("text", block.getText());
+                            contentMap.put("text", text);
                         } else if (block.getType() == ContentType.IMAGE && block.getImage() != null) {
                             contentMap.put("type", "binary");
                             contentMap.put("mimeType", "image/" + block.getImage().getFormat());
@@ -406,6 +425,30 @@ public class AGUIInputConverter {
         }
 
         return aguiMessages;
+    }
+
+    /**
+     * Strips the context prefix from text content.
+     * Context prefix format: "Context:\n- description: value\n...\n\n{user input}"
+     *
+     * @param text the text potentially containing a context prefix
+     * @return text with context prefix removed, or original text if no context found
+     */
+    private static String stripContextPrefix(String text) {
+        if (text == null || !text.startsWith("Context:\n")) {
+            return text;
+        }
+
+        // Find the end of context section (double newline)
+        int contextEnd = text.indexOf("\n\n");
+        if (contextEnd == -1) {
+            // No double newline found, context might be malformed or text is all context
+            return text;
+        }
+
+        // Return the text after the context section
+        String strippedText = text.substring(contextEnd + 2);
+        return strippedText.isEmpty() ? text : strippedText;
     }
 
     /**
