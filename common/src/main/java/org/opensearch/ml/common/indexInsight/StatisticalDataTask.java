@@ -41,8 +41,6 @@ import org.opensearch.search.aggregations.bucket.sampler.SamplerAggregationBuild
 import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.CardinalityAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.InternalTopHits;
-import org.opensearch.search.aggregations.metrics.MaxAggregationBuilder;
-import org.opensearch.search.aggregations.metrics.MinAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.TopHitsAggregationBuilder;
 import org.opensearch.search.builder.SearchSourceBuilder;
 import org.opensearch.search.sort.SortOrder;
@@ -223,13 +221,13 @@ public class StatisticalDataTask extends AbstractIndexInsightTask {
             .size(0)
             .aggregation(samplerAgg);
 
-
         for (Map.Entry<String, String> field : fields.entrySet()) {
             String name = field.getKey();
             String type = field.getValue();
             String fieldUsed = "text".equals(type) ? name + ".keyword" : name;
 
-            if (MIN_MAX_LIST.contains(type) && !(name.toLowerCase(Locale.ROOT).contains("time") | name.toLowerCase(Locale.ROOT).contains("date"))) {
+            if (MIN_MAX_LIST.contains(type)
+                && !(name.toLowerCase(Locale.ROOT).contains("time") | name.toLowerCase(Locale.ROOT).contains("date"))) {
                 sourceBuilder.aggregation(AggregationBuilders.min(MIN_VALUE_PREFIX + name).field(fieldUsed));
                 sourceBuilder.aggregation(AggregationBuilders.max(MAX_VALUE_PREFIX + name).field(fieldUsed));
             }
