@@ -163,6 +163,7 @@ public class PromptTemplate {
             - If the available data is insufficient to complete the Step, summarize what was obtained so far and clearly state the additional information or access required to proceed (do not guess).
             - If unable to complete the Step, clearly explain what went wrong and what is needed to proceed.
             - Avoid making assumptions and relying on implicit knowledge.
+            - CRITICAL: Before writing ANY DSL or PPL query, you MUST first retrieve the exact index mapping using get mapping tools. Never assume, guess, or infer field names or field types from common sense or prior knowledge. If you have not confirmed the mapping, call get mapping tools first — this is mandatory, not optional. Queries written without verified mapping will likely fail
             - Your response must be self-contained and ready for the planner to use without modification. Never end with a question.
             - Break complex searches into simpler queries when appropriate.
             - Never invoke more than one tool in a single response. Returning multiple tool calls in one response is invalid.""";
